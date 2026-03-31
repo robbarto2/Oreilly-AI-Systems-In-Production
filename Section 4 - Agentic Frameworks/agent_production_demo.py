@@ -11,8 +11,12 @@ Usage:
 
 import os
 import time
+from pathlib import Path
 from typing import TypedDict, Optional
 from datetime import datetime
+
+# Cursor / IDE runs with workspace root as cwd; data files live next to this script.
+_SCRIPT_DIR = Path(__file__).resolve().parent
 
 # LangChain imports
 from langchain_community.llms import Ollama
@@ -80,7 +84,7 @@ def setup_local_search():
     print("📚 Setting up local RAG system...")
 
     # Load and chunk the document
-    loader = TextLoader("climate.txt")
+    loader = TextLoader(str(_SCRIPT_DIR / "climate.txt"))
     docs = loader.load()
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
     chunks = splitter.split_documents(docs)
@@ -90,7 +94,7 @@ def setup_local_search():
     vectorstore = Chroma.from_documents(
         chunks,
         embeddings,
-        persist_directory="demo_chroma"
+        persist_directory=str(_SCRIPT_DIR / "demo_chroma")
     )
 
     # Create retriever
@@ -453,6 +457,20 @@ def demo_langgraph_agent(qa_chain, simulate_failure: bool = False):
 
 # ==================== MAIN DEMO ====================
 
+def pause_for_explanation(message="Press Enter to continue...", talking_points=None):
+    """Pause the demo so instructor can explain"""
+    print("\n" + "─" * 60)
+    print(f"⏸️  PAUSE FOR EXPLANATION")
+    print("─" * 60)
+    if talking_points:
+        print("\n💬 Key points to cover:")
+        for point in talking_points:
+            print(f"   • {point}")
+    print(f"\n{message}")
+    print("─" * 60)
+    input()
+
+
 def main():
     """Run the complete demo"""
     print("\n" + "=" * 60)
@@ -465,11 +483,46 @@ def main():
     # Part 1: LangChain (normal operation)
     print("\n🎬 Demo 1: Both approaches working normally\n")
     demo_langchain_agent(qa_chain, simulate_failure=False)
+
+    # Pause for explanation
+    pause_for_explanation(
+        "Press Enter when ready to see LangGraph...",
+        talking_points=[
+            "LangChain worked, but notice: 3 tool calls, 12+ seconds",
+            "Hit iteration limit - agent stopped prematurely",
+            "No visibility into why it made those tool choices",
+            "Hard to debug what happened under the hood"
+        ]
+    )
+
     demo_langgraph_agent(qa_chain, simulate_failure=False)
+
+    # Pause before failure demo
+    pause_for_explanation(
+        "Press Enter to see failure handling...",
+        talking_points=[
+            "LangGraph: 1 tool call, ~1.5 seconds (8x faster!)",
+            "Clear decision log shows exactly what happened",
+            "Explicit routing: always try local (cheap) first",
+            "This is testable, observable, production-ready"
+        ]
+    )
 
     # Part 2: With failure (shows difference in error handling)
     print("\n🎬 Demo 2: Simulating web API failure\n")
     demo_langchain_agent(qa_chain, simulate_failure=True)
+
+    # Pause for explanation
+    pause_for_explanation(
+        "Press Enter to see how LangGraph handles the same failure...",
+        talking_points=[
+            "LangChain tried the web tool but we simulated a failure",
+            "Error handling is opaque - you can't see what failed or why",
+            "No easy way to add retry logic or fallback behavior",
+            "At 2 AM debugging this in production, you'd be frustrated"
+        ]
+    )
+
     demo_langgraph_agent(qa_chain, simulate_failure=True)
 
     # Summary
