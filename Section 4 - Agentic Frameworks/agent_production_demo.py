@@ -16,9 +16,10 @@ from pathlib import Path
 from typing import TypedDict, Optional
 from datetime import datetime
 
-# Suppress deprecation warnings for cleaner demo output
-warnings.filterwarnings('ignore', category=DeprecationWarning)
-warnings.filterwarnings('ignore', message='.*deprecated.*')
+# Suppress all warnings for cleaner demo output
+# This includes LangChainDeprecationWarning and other deprecation warnings
+warnings.filterwarnings('ignore')
+os.environ['PYTHONWARNINGS'] = 'ignore'
 
 # Cursor / IDE runs with workspace root as cwd; data files live next to this script.
 _SCRIPT_DIR = Path(__file__).resolve().parent
