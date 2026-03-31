@@ -58,12 +58,14 @@ This hands-on course teaches you how to deploy, secure, and operate LLM and agen
 - **Code:** [`Section 4 - Agentic Frameworks/`](./Section%204%20-%20Agentic%20Frameworks/)
 - **Topics:**
   - What changes when agents move from development to production
-  - Understanding CrewAI, LangChain, and others
-  - Operational implications of agent-based architectures
-  - Scaling and operating agent-based systems reliably
+  - LangChain vs LangGraph: prototyping vs production
+  - Operational concerns: observability, error handling, cost optimization
+  - Explicit control flow and graceful degradation
 - **Files:**
-  - [`LangChain_Agent.ipynb`](./Section%204%20-%20Agentic%20Frameworks/LangChain_Agent.ipynb) - LangChain agent implementations with RAG and tool usage
-  - [`Agent_demo.ipynb`](./Section%204%20-%20Agentic%20Frameworks/Agent_demo.ipynb) - Agent demonstration examples
+  - [`agent_production_demo.py`](./Section%204%20-%20Agentic%20Frameworks/agent_production_demo.py) - Complete production-ready demo comparing LangChain and LangGraph
+  - [`agent_production_demo.ipynb`](./Section%204%20-%20Agentic%20Frameworks/agent_production_demo.ipynb) - Interactive notebook version
+  - [`DEMO_SCRIPT.md`](./Section%204%20-%20Agentic%20Frameworks/DEMO_SCRIPT.md) - Instructor guide with timing and talking points
+  - [`README.md`](./Section%204%20-%20Agentic%20Frameworks/README.md) - Section overview and quick start guide
 
 #### Section 5: Cloud-Based Deployment of LLMs with AWS Bedrock (30 min)
 - **Instructor:** Rob Barton
@@ -101,8 +103,21 @@ This hands-on course teaches you how to deploy, secure, and operate LLM and agen
 
 ```
 ├── Section 2 - Local Model Serving/          # Ollama API and Python library examples
-├── Section 4 - Agentic Frameworks/           # LangChain and LangGraph agent implementations
+│   ├── Ollama-API.py
+│   ├── Ollama-python-library.py
+│   └── Knowledge Source/                     # Sample documents for RAG
+├── Section 4 - Agentic Frameworks/           # Production-ready agent demos
+│   ├── agent_production_demo.py              # Main demo: LangChain vs LangGraph
+│   ├── agent_production_demo.ipynb           # Interactive notebook version
+│   ├── DEMO_SCRIPT.md                        # Instructor guide (25-min demo)
+│   ├── SETUP.md                              # Setup and troubleshooting
+│   ├── README.md                             # Section overview
+│   └── climate.txt                           # Sample knowledge base
 ├── Section 5 - AI Models in the Cloud/       # AWS Bedrock examples with Streamlit UIs
+│   ├── list bedrock models.py
+│   ├── Invoke bedrock model.py
+│   ├── Bedrock Chatbot.py
+│   └── Anthropic Chatbot Guardrails.py
 ├── .gitignore                                # Git ignore patterns
 ├── pyproject.toml                            # uv/pip project configuration
 ├── requirements.txt                          # Python dependencies
@@ -113,16 +128,34 @@ Each section includes:
 - 📓 Jupyter Notebooks (`.ipynb`) or Python scripts (`.py`)
 - 📊 Sample data files and knowledge sources (where applicable)
 - 💻 Runnable examples for local testing and deployment
+- 📝 Documentation and instructor guides
 
 ## ⚙️ Prerequisites
 
 Before you begin, ensure you have:
 
-- 🐍 Python 3.10 or higher
-- 🦙 Ollama installed (for local model examples)
-- ☁️ AWS credentials configured with Bedrock access
+- 🐍 **Python 3.10 or higher** (3.10.13+ recommended)
+- 🦙 **Ollama installed** with required models:
+  ```bash
+  ollama pull llama3
+  ollama pull mxbai-embed-large
+  ```
+- ☁️ **AWS credentials configured** with Bedrock access (for Section 5)
 - 📚 Basic understanding of LLMs and Python
 - 🔧 Git installed
+
+### Quick Environment Check
+
+```bash
+# Verify Python version
+python3 --version  # Should be 3.10+
+
+# Verify Ollama is running
+ollama list
+
+# Check if models are available
+ollama list | grep -E "llama3|mxbai"
+```
 
 ## 🚀 Getting Started
 
@@ -169,43 +202,141 @@ Before you begin, ensure you have:
 
 ## 💡 Usage Examples
 
-### Running Jupyter Notebooks
+### Section 2: Local Model Serving
 
 ```bash
-jupyter notebook
-# Navigate to Section 4 - Agentic Frameworks/
-```
-
-### Running Streamlit Apps
-
-```bash
-# Bedrock Chatbot (Mistral 7B)
-streamlit run "Section 5 - AI Models in the Cloud/Bedrock Chatbot.py"
-
-# Claude Haiku Chatbot with Guardrails
-streamlit run "Section 5 - AI Models in the Cloud/Anthropic Chatbot Guardrails.py"
-```
-
-### Running Python Scripts
-
-```bash
-# Ollama examples
+# Ollama API integration
 python "Section 2 - Local Model Serving/Ollama-API.py"
-python "Section 2 - Local Model Serving/Ollama-python-library.py"
 
-# AWS Bedrock examples
+# Ollama Python library
+python "Section 2 - Local Model Serving/Ollama-python-library.py"
+```
+
+### Section 4: Agent Frameworks (Production Demo)
+
+```bash
+cd "Section 4 - Agentic Frameworks"
+
+# Run the complete production demo (recommended)
+python agent_production_demo.py
+
+# Or explore interactively with Jupyter
+jupyter notebook agent_production_demo.ipynb
+```
+
+**What the demo shows:**
+- ⚡ LangChain: Fast prototyping but limited production control
+- 🎯 LangGraph: Production-ready with observability and error handling
+- 📊 Metrics tracking: Cost, latency, and decision paths
+- 🔄 Error handling: Graceful degradation when tools fail
+
+### Section 5: Cloud-Based Deployment
+
+```bash
+# List available Bedrock models
 python "Section 5 - AI Models in the Cloud/list bedrock models.py"
+
+# Basic model invocation
 python "Section 5 - AI Models in the Cloud/Invoke bedrock model.py"
+
+# Streamlit chatbot apps
+streamlit run "Section 5 - AI Models in the Cloud/Bedrock Chatbot.py"
+streamlit run "Section 5 - AI Models in the Cloud/Anthropic Chatbot Guardrails.py"
 ```
 
 ## 🛠️ Key Technologies
 
-- **Local Serving**: Ollama, vLLM
-- **Agent Frameworks**: LangChain, LangGraph, CrewAI
-- **Cloud Platforms**: AWS Bedrock
-- **Vector Stores**: ChromaDB
-- **UI Framework**: Streamlit
-- **Monitoring**: LangSmith
+| Category | Technologies |
+|----------|-------------|
+| **Local Serving** | Ollama (llama3, mxbai-embed-large) |
+| **Agent Frameworks** | LangChain 0.3+, LangGraph 1.1+ |
+| **Vector Stores** | ChromaDB 1.5+ |
+| **Cloud Platforms** | AWS Bedrock (Claude, Mistral) |
+| **UI Framework** | Streamlit 1.55+ |
+| **Monitoring** | LangSmith (Section 7) |
+| **Additional Tools** | Wikipedia API, Jupyter |
+
+### Dependencies
+
+All dependencies are specified in `requirements.txt` and `pyproject.toml`:
+
+```bash
+# Core LangChain ecosystem
+langchain>=0.3.0
+langchain-community>=0.3.0
+langchain-core>=0.3.0
+langgraph>=0.2.0
+
+# Vector stores and embeddings
+chromadb>=0.4.22
+
+# AWS and Streamlit
+boto3>=1.34.0
+streamlit>=1.31.0
+
+# Development tools
+jupyter>=1.0.0
+wikipedia>=1.4.0
+```
+
+See [requirements.txt](./requirements.txt) for the complete list.
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**Issue: `ModuleNotFoundError: No module named 'langchain_community'`**
+
+Solution:
+```bash
+# Make sure you're in the project root
+cd Oreilly-AI-Systems-In-Production
+
+# Install/reinstall dependencies
+pip install -r requirements.txt
+```
+
+**Issue: Ollama connection refused**
+
+Solution:
+```bash
+# Check if Ollama is running
+ollama list
+
+# If not, start it
+ollama serve
+
+# Verify models are pulled
+ollama pull llama3
+ollama pull mxbai-embed-large
+```
+
+**Issue: Python version mismatch (pyenv users)**
+
+If using pyenv with multiple Python versions:
+```bash
+# Check which Python is active
+python --version
+
+# Make sure it's 3.10+
+pyenv local 3.10.13  # or your preferred version
+
+# Reinstall requirements for that version
+pip install -r requirements.txt
+```
+
+**Issue: ChromaDB errors**
+
+Solution:
+```bash
+# Clear any corrupted vector stores
+cd "Section 4 - Agentic Frameworks"
+rm -rf demo_chroma
+
+# Demo will recreate it on next run
+```
+
+For more help, see section-specific SETUP.md files or open an issue on GitHub.
 
 ## 👥 Meet the Instructors
 
