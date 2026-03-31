@@ -11,9 +11,14 @@ Usage:
 
 import os
 import time
+import warnings
 from pathlib import Path
 from typing import TypedDict, Optional
 from datetime import datetime
+
+# Suppress deprecation warnings for cleaner demo output
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+warnings.filterwarnings('ignore', message='.*deprecated.*')
 
 # Cursor / IDE runs with workspace root as cwd; data files live next to this script.
 _SCRIPT_DIR = Path(__file__).resolve().parent
