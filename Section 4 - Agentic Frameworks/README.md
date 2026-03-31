@@ -31,14 +31,23 @@ ollama pull mxbai-embed-large
 
 ### Run the Demo
 
+⚠️ **IMPORTANT:** You must run the demo from within the `Section 4 - Agentic Frameworks/` directory (the script looks for `climate.txt` in the current directory).
+
 **Option 1: Python Script (Recommended for instructors)**
 ```bash
+# Navigate to Section 4 directory first
 cd "Section 4 - Agentic Frameworks"
+
+# Then run the demo
 python agent_production_demo.py
 ```
 
 **Option 2: Jupyter Notebook (For students)**
 ```bash
+# Navigate to Section 4 directory first
+cd "Section 4 - Agentic Frameworks"
+
+# Then start Jupyter
 jupyter notebook agent_production_demo.ipynb
 ```
 

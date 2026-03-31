@@ -69,12 +69,22 @@ ollama list | grep -E "llama3|mxbai"
 
 ## Run the Demo
 
+⚠️ **CRITICAL:** The demo must be run from within the `Section 4 - Agentic Frameworks/` directory!
+
 Once dependencies are installed:
 
 ```bash
+# Make sure you're in the right directory
 cd "Section 4 - Agentic Frameworks"
+
+# Verify you're in the right place (should show climate.txt)
+ls climate.txt
+
+# Run the demo
 python agent_production_demo.py
 ```
+
+**Common mistake:** Running from the project root will fail with `FileNotFoundError: climate.txt`
 
 ## Troubleshooting
 

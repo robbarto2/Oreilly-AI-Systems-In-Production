@@ -214,7 +214,10 @@ python "Section 2 - Local Model Serving/Ollama-python-library.py"
 
 ### Section 4: Agent Frameworks (Production Demo)
 
+⚠️ **Must be run from the Section 4 directory:**
+
 ```bash
+# Navigate to Section 4 directory
 cd "Section 4 - Agentic Frameworks"
 
 # Run the complete production demo (recommended)
