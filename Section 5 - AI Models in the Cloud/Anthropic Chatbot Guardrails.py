@@ -54,6 +54,19 @@ def invoke_claude(messages, max_tokens, temperature):
     response = bedrock_client.invoke_model(**invoke_kwargs)
 
     result = json.loads(response["body"].read())
+
+    # Extract and store trace information if enabled
+    trace_data = None
+    if st.session_state.get("guardrails_trace"):
+        # The trace info is in the top-level response metadata
+        trace_data = {
+            "amazon-bedrock-guardrailAction": response.get("ResponseMetadata", {}).get("HTTPHeaders", {}).get("x-amzn-bedrock-guardrail-action"),
+            "amazon-bedrock-trace": response.get("ResponseMetadata", {}).get("HTTPHeaders", {}).get("x-amzn-bedrock-trace"),
+            "result": result  # Full result may contain trace info
+        }
+        # Store in session state to display later
+        st.session_state.last_trace = trace_data
+
     content = result.get("content") or []
     if not content:
         return ""
@@ -123,3 +136,9 @@ if prompt := st.chat_input("Ask me anything..."):
 
 # --- Token Tracker ---
 st.sidebar.markdown(f"🧮 **Estimated tokens used:** `{st.session_state.token_count}`")
+
+# --- Guardrails Trace Display ---
+if st.session_state.get("guardrails_trace") and st.session_state.get("last_trace"):
+    with st.sidebar.expander("🔍 Guardrail Trace (Latest)"):
+        trace = st.session_state.last_trace
+        st.json(trace)
