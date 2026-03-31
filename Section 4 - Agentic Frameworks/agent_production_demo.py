@@ -191,22 +191,28 @@ def demo_langchain_agent(qa_chain, simulate_failure: bool = False):
         tools,
         llm,
         agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-        verbose=False,  # In production, you'd use structured logging instead
+        verbose=True,  # Show tool calls as they happen
         max_iterations=3,
         handle_parsing_errors=True
     )
 
     # Run query
     question = "What causes the most CO2 emissions?"
-    print(f"\n❓ Question: {question}\n")
+    print(f"\n❓ Question: {question}")
+    print("⏱️  Starting timer...\n")
 
     metrics.reset()
     metrics.start()
+    start_time = time.time()
 
     try:
         result = agent.invoke({"input": question})
+        elapsed = time.time() - start_time
+        print(f"\n⏱️  Completed in {elapsed:.2f} seconds")
         print(f"💬 Answer: {result['output']}\n")
     except Exception as e:
+        elapsed = time.time() - start_time
+        print(f"\n⏱️  Failed after {elapsed:.2f} seconds")
         print(f"❌ Agent failed: {str(e)}\n")
 
     # Show metrics
@@ -430,15 +436,21 @@ def demo_langgraph_agent(qa_chain, simulate_failure: bool = False):
 
     # Run query
     question = "What causes the most CO2 emissions?"
-    print(f"\n❓ Question: {question}\n")
+    print(f"\n❓ Question: {question}")
+    print("⏱️  Starting timer...\n")
 
     metrics.reset()
     metrics.start()
+    start_time = time.time()
 
     try:
         result = app.invoke({"question": question})
+        elapsed = time.time() - start_time
+        print(f"\n⏱️  Completed in {elapsed:.2f} seconds")
         print(f"\n💬 Final Answer:\n{result['final_answer']}\n")
     except Exception as e:
+        elapsed = time.time() - start_time
+        print(f"\n⏱️  Failed after {elapsed:.2f} seconds")
         print(f"❌ Agent failed: {str(e)}\n")
 
     # Show metrics
