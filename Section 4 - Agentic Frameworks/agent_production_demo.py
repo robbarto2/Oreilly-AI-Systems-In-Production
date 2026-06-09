@@ -2,8 +2,8 @@
 """
 Production-Ready Agent Demo: LangChain vs LangGraph
 
-This demo shows the difference between LangChain and LangGraph for production deployments.
-Focus: error handling, observability, cost tracking, and explicit control flow.
+Shows the difference in observability and debuggability.
+Both agents use the LLM to decide which tools to call.
 
 Usage:
     python agent_production_demo.py
@@ -13,18 +13,14 @@ import os
 import time
 import warnings
 from pathlib import Path
-from typing import TypedDict, Optional
+from typing import TypedDict, Annotated
 from datetime import datetime
 
-# Suppress all warnings for cleaner demo output
-# This includes LangChainDeprecationWarning and other deprecation warnings
 warnings.filterwarnings('ignore')
 os.environ['PYTHONWARNINGS'] = 'ignore'
 
-# Cursor / IDE runs with workspace root as cwd; data files live next to this script.
 _SCRIPT_DIR = Path(__file__).resolve().parent
 
-# LangChain imports
 from langchain_community.llms import Ollama
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.vectorstores import Chroma
@@ -33,11 +29,11 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_classic.chains import RetrievalQA
 from langchain_core.tools import Tool
 from langchain_classic.agents import initialize_agent, AgentType
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage
 
-# LangGraph imports
 from langgraph.graph import StateGraph, END
+from langgraph.graph.message import add_messages
 
-# For web search fallback
 try:
     import wikipedia
     WIKIPEDIA_AVAILABLE = True
@@ -46,528 +42,320 @@ except ImportError:
     print("⚠️  Wikipedia not installed. Install with: pip install wikipedia")
 
 
-class MetricsTracker:
-    """Track costs and performance metrics for production monitoring"""
-
-    def __init__(self):
-        self.tool_calls = 0
-        self.errors = 0
-        self.start_time = None
-        self.decisions = []
-
-    def reset(self):
-        self.__init__()
-
-    def start(self):
-        self.start_time = time.time()
-
-    def log_tool_call(self, tool_name: str, success: bool):
-        self.tool_calls += 1
-        self.decisions.append({
-            "tool": tool_name,
-            "success": success,
-            "timestamp": datetime.now().isoformat()
-        })
-        if not success:
-            self.errors += 1
-
-    def report(self):
-        elapsed = time.time() - self.start_time if self.start_time else 0
-        return {
-            "tool_calls": self.tool_calls,
-            "errors": self.errors,
-            "elapsed_seconds": round(elapsed, 2),
-            "decisions": self.decisions
-        }
-
-
-# Global metrics tracker
-metrics = MetricsTracker()
-
+# ==================== SHARED SETUP ====================
 
 def setup_local_search():
-    """Set up RAG system for local document search"""
     print("📚 Setting up local RAG system...")
 
-    # Load and chunk the document
     loader = TextLoader(str(_SCRIPT_DIR / "climate.txt"))
     docs = loader.load()
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
     chunks = splitter.split_documents(docs)
 
-    # Create embeddings and vector store
     embeddings = OllamaEmbeddings(model="mxbai-embed-large")
-    vectorstore = Chroma.from_documents(
-        chunks,
-        embeddings,
-        persist_directory=str(_SCRIPT_DIR / "demo_chroma")
-    )
+    chroma_dir = str(_SCRIPT_DIR / "demo_chroma")
+    if (_SCRIPT_DIR / "demo_chroma" / "chroma.sqlite3").exists():
+        print("   (loading existing vector store...)")
+        vectorstore = Chroma(persist_directory=chroma_dir, embedding_function=embeddings)
+    else:
+        print("   (building vector store — takes ~30s the first time...)")
+        vectorstore = Chroma.from_documents(chunks, embeddings, persist_directory=chroma_dir)
 
-    # Create retriever
-    retriever = vectorstore.as_retriever(
-        search_type="mmr",
-        search_kwargs={"k": 3}
-    )
-
-    # Create QA chain
+    retriever = vectorstore.as_retriever(search_type="mmr", search_kwargs={"k": 3})
     llm = Ollama(model="llama3")
     qa_chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        retriever=retriever,
-        return_source_documents=True
+        llm=llm, retriever=retriever, return_source_documents=True
     )
 
     print("✅ RAG system ready\n")
     return qa_chain
 
 
-def local_search_tool(query: str, qa_chain) -> str:
-    """Search local documents with error handling"""
+def run_local_search(query: str, qa_chain) -> str:
     try:
-        metrics.log_tool_call("local_search", True)
         result = qa_chain.invoke({"query": query})
         return result["result"]
     except Exception as e:
-        metrics.log_tool_call("local_search", False)
         return f"❌ Local search failed: {str(e)}"
 
 
-def web_search_tool(query: str, simulate_failure: bool = False) -> str:
-    """Search Wikipedia with error handling and retry logic"""
-
-    if simulate_failure:
-        metrics.log_tool_call("web_search", False)
-        return "❌ Web API unavailable (simulated failure)"
-
+def run_web_search(query: str) -> str:
     if not WIKIPEDIA_AVAILABLE:
-        metrics.log_tool_call("web_search", False)
         return "❌ Wikipedia module not installed"
-
     try:
-        metrics.log_tool_call("web_search", True)
-        # Search Wikipedia
-        search_results = wikipedia.search(query)
-        if search_results:
-            page_title = search_results[0]
-            summary = wikipedia.summary(page_title, sentences=3)
-            return f"📰 From Wikipedia ({page_title}): {summary}"
-        else:
-            return "❌ No Wikipedia results found"
+        results = wikipedia.search(query)
+        if results:
+            summary = wikipedia.summary(results[0], sentences=3)
+            return f"📰 From Wikipedia ({results[0]}): {summary}"
+        return "❌ No Wikipedia results found"
     except Exception as e:
-        metrics.log_tool_call("web_search", False)
         return f"❌ Web search failed: {str(e)}"
 
 
 # ==================== PART 1: LANGCHAIN AGENT ====================
 
-def demo_langchain_agent(qa_chain, simulate_failure: bool = False):
-    """
-    LangChain agent with tools
-
-    Pros: Quick to set up
-    Cons: Limited control, hard to debug, unpredictable behavior
-    """
+def demo_langchain_agent(qa_chain):
     print("=" * 60)
-    print("PART 1: LangChain Agent (Quick but Less Control)")
+    print("PART 1: LangChain Agent")
     print("=" * 60)
+    print("""
+The LangChain agent uses a ReAct loop: the LLM decides which tool
+to call, reads the result, and decides what to do next. It works —
+but you're watching a stream of text, not structured state.
 
-    # Create tools
+Notice:
+  - You can't easily tell WHEN a decision was made
+  - No way to pause and inspect mid-run
+  - No way to redirect or interrupt the agent
+  - If something goes wrong, good luck debugging it
+""")
+
+    # Counter to track agentic loops — each tool call is one loop iteration
+    loop_counter = {"count": 0}
+
+    def local_search_with_count(q):
+        loop_counter["count"] += 1
+        print(f"   🔧 [Loop #{loop_counter['count']}] LocalSearch")
+        return run_local_search(q, qa_chain)
+
+    def web_search_with_count(q):
+        loop_counter["count"] += 1
+        print(f"   🔧 [Loop #{loop_counter['count']}] WebSearch")
+        return run_web_search(q)
+
     tools = [
         Tool(
             name="LocalSearch",
-            func=lambda q: local_search_tool(q, qa_chain),
-            description="Search local climate documents. Use this first for climate-related questions."
+            func=local_search_with_count,
+            description="Search local climate documents. Use for climate-related questions."
         ),
         Tool(
             name="WebSearch",
-            func=lambda q: web_search_tool(q, simulate_failure),
-            description="Search Wikipedia. Use only if local search doesn't find the answer."
+            func=web_search_with_count,
+            description="Search Wikipedia for general information."
         )
     ]
 
-    # Initialize agent
     llm = Ollama(model="llama3")
     agent = initialize_agent(
         tools,
         llm,
         agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-        verbose=True,  # Show tool calls as they happen
-        max_iterations=3,
+        verbose=True,
         handle_parsing_errors=True
     )
 
-    # Run query
-    question = "What causes the most CO2 emissions?"
-    print(f"\n❓ Question: {question}")
-    print("⏱️  Starting timer...\n")
+    question = "What are the main causes of climate change and what countries are the biggest emitters?"
+    print(f"❓ Question: {question}")
+    print("⏱️  Running...\n")
 
-    metrics.reset()
-    metrics.start()
-    start_time = time.time()
-
+    start = time.time()
     try:
         result = agent.invoke({"input": question})
-        elapsed = time.time() - start_time
-        print(f"\n⏱️  Completed in {elapsed:.2f} seconds")
-        print(f"💬 Answer: {result['output']}\n")
+        elapsed = time.time() - start
+        print(f"\n💬 Answer: {result['output']}\n")
     except Exception as e:
-        elapsed = time.time() - start_time
-        print(f"\n⏱️  Failed after {elapsed:.2f} seconds")
-        print(f"❌ Agent failed: {str(e)}\n")
+        elapsed = time.time() - start
+        print(f"\n❌ Failed after {elapsed:.2f}s: {e}\n")
 
-    # Show metrics
-    report = metrics.report()
-    print("📊 Metrics:")
-    print(f"   - Tool calls: {report['tool_calls']}")
-    print(f"   - Errors: {report['errors']}")
-    print(f"   - Time: {report['elapsed_seconds']}s")
-
-    if simulate_failure:
-        print("\n⚠️  Notice: With LangChain, error handling is less transparent")
-        print("   You don't have explicit control over retry logic or fallback behavior")
-
-    print()
+    return {"loops": loop_counter["count"], "elapsed": elapsed}
 
 
 # ==================== PART 2: LANGGRAPH AGENT ====================
 
 class AgentState(TypedDict):
-    """State for LangGraph agent"""
-    question: str
-    local_result: Optional[str]
-    web_result: Optional[str]
-    final_answer: Optional[str]
-    error: Optional[str]
-    next_step: Optional[str]
+    messages: Annotated[list[BaseMessage], add_messages]
+    tool_calls_log: list[dict]
+    loop_count: int
 
 
-def route_question(state: AgentState) -> AgentState:
-    """
-    Router node: Decides which tool to use first
+def make_langgraph_agent(qa_chain):
+    llm = Ollama(model="llama3")
 
-    Production benefit: Explicit routing logic that's testable and observable
-    """
-    print("🔀 Router: Starting with local search (cheaper, faster)")
-    return {**state, "next_step": "local"}
+    def should_continue(state: AgentState) -> str:
+        last = state["messages"][-1]
+        content = last.content if hasattr(last, "content") else ""
+        if "Action:" in content and "Action Input:" in content:
+            return "tools"
+        return "end"
 
+    def call_model(state: AgentState) -> AgentState:
+        loop_num = state.get("loop_count", 0) + 1
+        print(f"\n🧠 [LangGraph Loop #{loop_num}] LLM thinking...")
 
-def local_search_node(state: AgentState, qa_chain) -> AgentState:
-    """
-    Local search node with error handling
+        system = """You are a research assistant. Use tools to answer the question.
 
-    Production benefit: Can add retries, timeouts, circuit breakers here
-    """
-    print("📚 Searching local documents...")
+Available tools:
+- LocalSearch: Search local climate documents
+- WebSearch: Search Wikipedia
 
-    try:
-        result = local_search_tool(state["question"], qa_chain)
+Use this format:
+Thought: <your reasoning>
+Action: <LocalSearch or WebSearch>
+Action Input: <the query>
 
-        # Check if we got a good result
-        if "❌" not in result:
-            print(f"✅ Found answer locally: {result[:100]}...")
-            return {
-                **state,
-                "local_result": result,
-                "next_step": "synthesize"
-            }
+When you have enough information, respond with:
+Thought: I have enough information
+Final Answer: <your answer>"""
+
+        messages = state["messages"]
+        conversation = "\n".join(
+            f"{'User' if isinstance(m, HumanMessage) else 'Assistant'}: {m.content}"
+            for m in messages
+        )
+
+        response = llm.invoke(f"{system}\n\n{conversation}\nAssistant:")
+        ai_msg = AIMessage(content=response)
+
+        print(f"\n📋 [LangGraph] LLM decision:\n{response[:300]}{'...' if len(response) > 300 else ''}")
+
+        return {
+            "messages": [ai_msg],
+            "tool_calls_log": state.get("tool_calls_log", []),
+            "loop_count": loop_num
+        }
+
+    def call_tools(state: AgentState) -> AgentState:
+        last = state["messages"][-1]
+        content = last.content
+
+        tool_name = None
+        tool_input = None
+        for line in content.split("\n"):
+            if line.startswith("Action:"):
+                tool_name = line.replace("Action:", "").strip()
+            elif line.startswith("Action Input:"):
+                tool_input = line.replace("Action Input:", "").strip()
+
+        if not tool_name or not tool_input:
+            return state
+
+        print(f"\n🔧 [LangGraph] Executing: {tool_name}({tool_input[:60]})")
+
+        if tool_name == "LocalSearch":
+            result = run_local_search(tool_input, qa_chain)
+        elif tool_name == "WebSearch":
+            result = run_web_search(tool_input)
         else:
-            print(f"⚠️  Local search failed, will try web search")
-            return {
-                **state,
-                "local_result": None,
-                "next_step": "web"
-            }
-    except Exception as e:
-        print(f"❌ Local search error: {e}")
+            result = f"❌ Unknown tool: {tool_name}"
+
+        log_entry = {
+            "tool": tool_name,
+            "input": tool_input,
+            "result_preview": result[:100],
+            "timestamp": datetime.now().isoformat()
+        }
+        print(f"📄 [LangGraph] Result: {result[:150]}...")
+
+        tool_msg = ToolMessage(content=f"Observation: {result}", tool_call_id="1")
+        log = state.get("tool_calls_log", []) + [log_entry]
+
         return {
-            **state,
-            "local_result": None,
-            "error": str(e),
-            "next_step": "web"
+            "messages": [tool_msg],
+            "tool_calls_log": log,
+            "loop_count": state.get("loop_count", 0)
         }
 
-
-def web_search_node(state: AgentState, simulate_failure: bool = False) -> AgentState:
-    """
-    Web search node with fallback
-
-    Production benefit: Explicit failure handling and cost awareness
-    """
-    print("🌐 Searching web (fallback)...")
-
-    result = web_search_tool(state["question"], simulate_failure)
-
-    if "❌" not in result:
-        print(f"✅ Found answer on web: {result[:100]}...")
-        return {
-            **state,
-            "web_result": result,
-            "next_step": "synthesize"
-        }
-    else:
-        print(f"❌ Web search also failed: {result}")
-        return {
-            **state,
-            "web_result": None,
-            "error": result,
-            "next_step": "error"
-        }
-
-
-def synthesize_answer(state: AgentState) -> AgentState:
-    """
-    Synthesize final answer from available sources
-
-    Production benefit: Clear citation and source tracking
-    """
-    print("🔄 Synthesizing final answer...")
-
-    sources = []
-    if state.get("local_result"):
-        sources.append(f"Local documents: {state['local_result']}")
-    if state.get("web_result"):
-        sources.append(f"Web search: {state['web_result']}")
-
-    if sources:
-        final_answer = "\n\n".join(sources)
-        return {
-            **state,
-            "final_answer": final_answer,
-            "next_step": "end"
-        }
-    else:
-        return {
-            **state,
-            "final_answer": "Unable to find answer from any source",
-            "next_step": "end"
-        }
-
-
-def handle_error(state: AgentState) -> AgentState:
-    """
-    Error handling node
-
-    Production benefit: Graceful degradation with clear error messages
-    """
-    error_msg = state.get("error", "Unknown error")
-    print(f"⚠️  All sources failed. Error: {error_msg}")
-    return {
-        **state,
-        "final_answer": f"Sorry, I couldn't retrieve an answer. Error: {error_msg}",
-        "next_step": "end"
-    }
-
-
-def demo_langgraph_agent(qa_chain, simulate_failure: bool = False):
-    """
-    LangGraph agent with explicit control flow
-
-    Pros: Observable, testable, predictable, production-ready
-    Cons: More verbose setup
-    """
-    print("=" * 60)
-    print("PART 2: LangGraph Agent (Production-Ready)")
-    print("=" * 60)
-
-    # Build the graph
     graph = StateGraph(AgentState)
+    graph.add_node("model", call_model)
+    graph.add_node("tools", call_tools)
+    graph.set_entry_point("model")
+    graph.add_conditional_edges("model", should_continue, {"tools": "tools", "end": END})
+    graph.add_edge("tools", "model")
 
-    # Add nodes
-    graph.add_node("router", route_question)
-    graph.add_node("local", lambda s: local_search_node(s, qa_chain))
-    graph.add_node("web", lambda s: web_search_node(s, simulate_failure))
-    graph.add_node("synthesize", synthesize_answer)
-    graph.add_node("error_handler", handle_error)
-
-    # Set entry point
-    graph.set_entry_point("router")
-
-    # Add conditional edges based on next_step
-    def route_next(state: AgentState) -> str:
-        return state.get("next_step", "end")
-
-    graph.add_conditional_edges(
-        "router",
-        route_next,
-        {
-            "local": "local",
-            "end": END
-        }
-    )
-
-    graph.add_conditional_edges(
-        "local",
-        route_next,
-        {
-            "web": "web",
-            "synthesize": "synthesize",
-            "end": END
-        }
-    )
-
-    graph.add_conditional_edges(
-        "web",
-        route_next,
-        {
-            "synthesize": "synthesize",
-            "error": "error_handler",
-            "end": END
-        }
-    )
-
-    graph.add_conditional_edges(
-        "synthesize",
-        route_next,
-        {
-            "end": END
-        }
-    )
-
-    graph.add_conditional_edges(
-        "error_handler",
-        route_next,
-        {
-            "end": END
-        }
-    )
-
-    # Compile the graph
-    app = graph.compile()
-
-    # Run query
-    question = "What causes the most CO2 emissions?"
-    print(f"\n❓ Question: {question}")
-    print("⏱️  Starting timer...\n")
-
-    metrics.reset()
-    metrics.start()
-    start_time = time.time()
-
-    try:
-        result = app.invoke({"question": question})
-        elapsed = time.time() - start_time
-        print(f"\n⏱️  Completed in {elapsed:.2f} seconds")
-        print(f"\n💬 Final Answer:\n{result['final_answer']}\n")
-    except Exception as e:
-        elapsed = time.time() - start_time
-        print(f"\n⏱️  Failed after {elapsed:.2f} seconds")
-        print(f"❌ Agent failed: {str(e)}\n")
-
-    # Show metrics
-    report = metrics.report()
-    print("📊 Metrics:")
-    print(f"   - Tool calls: {report['tool_calls']}")
-    print(f"   - Errors: {report['errors']}")
-    print(f"   - Time: {report['elapsed_seconds']}s")
-    print(f"\n📋 Decision Log:")
-    for decision in report['decisions']:
-        status = "✅" if decision['success'] else "❌"
-        print(f"   {status} {decision['tool']} at {decision['timestamp']}")
-
-    if simulate_failure:
-        print("\n✨ Notice: LangGraph handled the failure gracefully!")
-        print("   - Clear visibility into what failed and why")
-        print("   - Explicit fallback logic")
-        print("   - Structured error handling")
-
-    print()
+    return graph.compile()
 
 
-# ==================== MAIN DEMO ====================
+def demo_langgraph_agent(qa_chain):
+    print("=" * 60)
+    print("PART 2: LangGraph Agent (Observable)")
+    print("=" * 60)
+    print("""
+Same LLM, same tools, same question.
 
-def pause_for_explanation(message="Press Enter to continue...", talking_points=None):
-    """Pause the demo so instructor can explain"""
-    print("\n" + "─" * 60)
-    print(f"⏸️  PAUSE FOR EXPLANATION")
-    print("─" * 60)
-    if talking_points:
-        print("\n💬 Key points to cover:")
-        for point in talking_points:
-            print(f"   • {point}")
-    print(f"\n{message}")
-    print("─" * 60)
-    input()
+Key differences you'll see:
+  ✅ Each loop is numbered — you can see exactly how many iterations ran
+  ✅ LLM decision is printed as structured state before execution
+  ✅ Full decision log at the end — every step, timestamped
+  ✅ State is checkpointed — you could pause, resume, or branch
+""")
 
+    app = make_langgraph_agent(qa_chain)
+    question = "What are the main causes of climate change and what countries are the biggest emitters?"
+    print(f"❓ Question: {question}\n")
+
+    start = time.time()
+    final_state = app.invoke({
+        "messages": [HumanMessage(content=question)],
+        "tool_calls_log": [],
+        "loop_count": 0
+    })
+    elapsed = time.time() - start
+
+    # Extract final answer
+    final_answer = ""
+    for msg in reversed(final_state["messages"]):
+        if isinstance(msg, AIMessage) and "Final Answer:" in msg.content:
+            final_answer = msg.content.split("Final Answer:")[-1].strip()
+            break
+
+    print(f"\n💬 Final Answer:\n{final_answer}\n")
+
+    print("📋 Full Decision Log:")
+    for i, entry in enumerate(final_state.get("tool_calls_log", []), 1):
+        print(f"   {i}. {entry['tool']}({entry['input'][:50]})")
+        print(f"      → {entry['result_preview'][:80]}...")
+        print(f"      @ {entry['timestamp']}")
+
+    return {"loops": final_state.get("loop_count", 0), "elapsed": elapsed}
+
+
+# ==================== MAIN ====================
 
 def main():
-    """Run the complete demo"""
     print("\n" + "=" * 60)
     print("Production Agent Demo: LangChain vs LangGraph")
     print("=" * 60 + "\n")
 
-    # Setup
     qa_chain = setup_local_search()
 
-    # Part 1: LangChain (normal operation)
-    print("\n🎬 Demo 1: Both approaches working normally\n")
-    demo_langchain_agent(qa_chain, simulate_failure=False)
+    lc_stats = demo_langchain_agent(qa_chain)
 
-    # Pause for explanation
-    pause_for_explanation(
-        "Press Enter when ready to see LangGraph...",
-        talking_points=[
-            "LangChain worked, but notice: 3 tool calls, 12+ seconds",
-            "Hit iteration limit - agent stopped prematurely",
-            "No visibility into why it made those tool choices",
-            "Hard to debug what happened under the hood"
-        ]
-    )
+    input("\nPress Enter to run LangGraph...\n")
 
-    demo_langgraph_agent(qa_chain, simulate_failure=False)
+    lg_stats = demo_langgraph_agent(qa_chain)
 
-    # Pause before failure demo
-    pause_for_explanation(
-        "Press Enter to see failure handling...",
-        talking_points=[
-            "LangGraph: 1 tool call, ~1.5 seconds (8x faster!)",
-            "Clear decision log shows exactly what happened",
-            "Explicit routing: always try local (cheap) first",
-            "This is testable, observable, production-ready"
-        ]
-    )
-
-    # Part 2: With failure (shows difference in error handling)
-    print("\n🎬 Demo 2: Simulating web API failure\n")
-    demo_langchain_agent(qa_chain, simulate_failure=True)
-
-    # Pause for explanation
-    pause_for_explanation(
-        "Press Enter to see how LangGraph handles the same failure...",
-        talking_points=[
-            "LangChain tried the web tool but we simulated a failure",
-            "Error handling is opaque - you can't see what failed or why",
-            "No easy way to add retry logic or fallback behavior",
-            "At 2 AM debugging this in production, you'd be frustrated"
-        ]
-    )
-
-    demo_langgraph_agent(qa_chain, simulate_failure=True)
-
-    # Summary
+    # Side-by-side comparison
+    print("\n" + "=" * 60)
+    print("COMPARISON")
     print("=" * 60)
-    print("KEY TAKEAWAYS FOR PRODUCTION")
-    print("=" * 60)
+    print(f"{'':20} {'LangChain':>15} {'LangGraph':>15}")
+    print(f"{'─'*50}")
+    print(f"{'Agentic loops':20} {lc_stats['loops']:>15} {lg_stats['loops']:>15}")
+    print(f"{'Total time (s)':20} {lc_stats['elapsed']:>15.2f} {lg_stats['elapsed']:>15.2f}")
+
     print("""
-    LangChain:
-    ✅ Fast prototyping
-    ✅ Less boilerplate
-    ❌ Hard to debug agent decisions
-    ❌ Limited error handling control
-    ❌ Unpredictable tool usage
+KEY TAKEAWAYS
+─────────────
+Both agents use the same LLM and same tools.
 
-    LangGraph:
-    ✅ Explicit control flow (testable!)
-    ✅ Observable decision path
-    ✅ Graceful error handling
-    ✅ Cost-aware routing
-    ✅ Production monitoring ready
-    ❌ More verbose setup
+LangChain:
+  ✅ Less code to write
+  ❌ Decisions are invisible until after the fact
+  ❌ Can't pause, inspect, or redirect mid-run
+  ❌ Hard to test individual steps
 
-    Recommendation:
-    - Prototyping: LangChain
-    - Production: LangGraph
-    - Multi-agent: Consider CrewAI
-    """)
+LangGraph:
+  ✅ Every LLM decision is visible as structured state
+  ✅ Numbered loops — instantly see how many iterations ran
+  ✅ Full audit trail of what happened and why
+  ✅ Checkpointing: pause, resume, branch at any point
+  ❌ More code to set up
+
+When to use each:
+  Prototyping / simple pipelines  → LangChain
+  Production / auditability       → LangGraph
+""")
 
 
 if __name__ == "__main__":
