@@ -5,20 +5,21 @@ import json
 session = boto3.Session(profile_name="robbarto", region_name="us-east-1")
 bedrock_runtime = session.client("bedrock-runtime")
 
-# Claude 3.5 Sonnet Model ID (latest known format as of June 2025)
-model_id = "anthropic.claude-3-5-sonnet-20240620-v1:0"
+# Llama 3.3 70B requires an inference profile (not the raw foundation model ID)
+model_id = "us.meta.llama3-3-70b-instruct-v1:0"
 
-# Create the Claude-style prompt
+user_message = "explain where the hubble space telescope is located."
+
+# Llama 3 prompt format for Bedrock
 prompt = {
-    "messages": [
-        {
-            "role": "user",
-            "content": "explain where the hubble space telescope is located."
-        }
-    ],
-    "max_tokens": 512,
+    "prompt": (
+        "<|begin_of_text|>"
+        "<|start_header_id|>user<|end_header_id|>\n\n"
+        f"{user_message}<|eot_id|>"
+        "<|start_header_id|>assistant<|end_header_id|>\n\n"
+    ),
+    "max_gen_len": 512,
     "temperature": 0.7,
-    "anthropic_version": "bedrock-2023-05-31"
 }
 
 try:
@@ -26,14 +27,13 @@ try:
         "modelId": model_id,
         "contentType": "application/json",
         "accept": "application/json",
-        "body": json.dumps(prompt)
+        "body": json.dumps(prompt),
     }
     response = bedrock_runtime.invoke_model(**invoke_kwargs)
 
-    # Parse and print the response
     result = json.loads(response["body"].read())
-    print("✅ Response from Claude 3.5 Sonnet:\n")
-    print(result["content"][0]["text"])
+    print("✅ Response from Llama 3.3 70B Instruct:\n")
+    print(result["generation"])
 
 except Exception as e:
     print("❌ Error invoking model:", e)
